@@ -1,0 +1,449 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lambo's AI Debate Arena</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1020;color:#f4f6ff;font-family:Arial,sans-serif}
+header{text-align:center;padding:22px 12px;background:#121a30;border-bottom:1px solid #293653}
+h1{margin:0;color:#8ee7ff;font-size:clamp(25px,5vw,40px)}
+header p,.muted{color:#aab8d4}
+main{max-width:1200px;margin:auto;padding:18px}
+.controls,.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input,textarea,button{font:inherit;border-radius:10px;padding:12px;border:1px solid #344464}
+input,textarea{background:#111a30;color:white;min-width:0}
+#topic{flex:1;min-width:220px}
+button{cursor:pointer;font-weight:bold;background:#79e4ff;color:#08111f;border:0}
+button.secondary{background:#293653;color:white}
+button:disabled{opacity:.5;cursor:not-allowed}
+.status{color:#aab8d4;margin:14px 0;overflow-wrap:anywhere}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel,.card{background:#121a30;border:1px solid #293653;border-radius:15px;overflow:hidden}
+.panel h2{margin:0;padding:15px;border-bottom:1px solid #293653}
+.gpt h2{color:#80e6bb}.perplexity h2{color:#9eb7ff}
+.messages{padding:14px;min-height:180px;white-space:pre-wrap;overflow-wrap:anywhere}
+.message{padding:12px;margin-bottom:10px;background:#1a2640;border-radius:10px;line-height:1.5}
+.message strong{display:block;margin-bottom:6px}
+.card{padding:16px;margin-top:18px}
+.scoreboard{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+.score{background:#1a2640;padding:14px;border-radius:12px;text-align:center}
+.stars{font-size:26px;letter-spacing:3px}
+textarea{width:100%;resize:vertical;margin:10px 0}
+.note{font-size:13px;line-height:1.5;color:#aab8d4}
+[hidden]{display:none!important}
+@media(max-width:700px){.panels{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔️ LAMBO'S AI DEBATE ARENA</h1>
+  <p>Three rounds. One judge. One champion.</p>
+</header>
+
+<main>
+  <div class="controls">
+    <input id="topic" placeholder="Enter a debate topic...">
+    <button id="start">⚔️ START BATTLE</button>
+    <button id="stop" class="secondary">🛑 STOP</button>
+    <button id="reset" class="secondary">🔄 RESET</button>
+  </div>
+
+  <div class="status" id="status">🟢 Arena ready. Enter a topic!</div>
+
+  <section class="card">
+    <h2>🏆 Live scoreboard</h2>
+    <div class="scoreboard">
+      <div class="score">
+        <strong>🟢 ChatGPT</strong>
+        <div id="gptScore" class="stars">☆☆☆</div>
+        <div id="gptCount">0 stars</div>
+      </div>
+      <div class="score">
+        <strong>🔵 Perplexity</strong>
+        <div id="pScore" class="stars">☆☆☆</div>
+        <div id="pCount">0 stars</div>
+      </div>
+    </div>
+    <div id="judgeLog" class="messages">
+      The judge is waiting for the battle...
+    </div>
+  </section>
+
+  <div class="panels" style="margin-top:16px">
+    <section class="panel gpt">
+      <h2>🟢 ChatGPT — FOR</h2>
+      <div class="messages" id="gpt">
+        <div class="message">Waiting for the topic...</div>
+      </div>
+    </section>
+    <section class="panel perplexity">
+      <h2>🔵 Perplexity — AGAINST</h2>
+      <div class="messages" id="perplexity">
+        <div class="message">Waiting for the topic...</div>
+      </div>
+    </section>
+  </div>
+
+  <section class="card" id="championCard" hidden>
+    <h2 id="championTitle">👑 Champion chat</h2>
+    <p class="muted">Talk privately with the winning debater. Only the champion replies here.</p>
+    <div id="championMessages" class="messages"></div>
+    <textarea id="chatInput" rows="3" placeholder="Talk to your champion..."></textarea>
+    <div class="row">
+      <button id="chatSend">💬 SEND MESSAGE</button>
+      <button id="chatClear" class="secondary">CLEAR CHAT</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>🎮 Lambo bro joins the debate</h2>
+    <textarea id="userMessage" rows="3" placeholder="Ask both debaters a question..."></textarea>
+    <button id="send">ADD MY MESSAGE</button>
+    <p class="note">Local Qwen model powers all three roles. The judge is an AI evaluator, so its decisions can be imperfect.</p>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const topicInput = $("topic");
+const statusBox = $("status");
+const leftPanel = $("gpt");
+const rightPanel = $("perplexity");
+
+let running = false;
+let sending = false;
+let champion = "";
+let championHistory = [];
+let scores = { ChatGPT: 0, Perplexity: 0 };
+let battleId = 0;
+
+function addMessage(panel, name, text) {
+  const box = document.createElement("div");
+  box.className = "message";
+  const title = document.createElement("strong");
+  title.textContent = name;
+  const body = document.createElement("div");
+  body.textContent = text;
+  box.append(title, body);
+  panel.append(box);
+  return body;
+}
+
+async function askAI(prompt) {
+  const response = await fetch("/debate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic: prompt })
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "AI request failed");
+  if (!data.reply) throw new Error("The AI returned an empty reply.");
+  return data.reply.trim();
+}
+
+function updateScoreboard() {
+  $("gptScore").textContent =
+    "★".repeat(scores.ChatGPT) + "☆".repeat(3 - scores.ChatGPT);
+  $("pScore").textContent =
+    "★".repeat(scores.Perplexity) + "☆".repeat(3 - scores.Perplexity);
+  $("gptCount").textContent = scores.ChatGPT + " star(s)";
+  $("pCount").textContent = scores.Perplexity + " star(s)";
+}
+
+function setBusy(value) {
+  $("start").disabled = value;
+  $("send").disabled = value;
+}
+
+function chooseChampion(name, reason) {
+  champion = name;
+  $("championCard").hidden = false;
+  $("championTitle").textContent = "👑 " + name + " is your champion!";
+  $("championMessages").replaceChildren();
+  championHistory = [];
+  addMessage(
+    $("championMessages"),
+    name,
+    "Hey Lambo bro! 😎 I won the arena! You can chat with me here. What's up?"
+  );
+  championHistory.push({
+    role: "assistant",
+    content: "Hey Lambo bro! I won the arena. What would you like to talk about?"
+  });
+  addMessage($("judgeLog"), "🏆 FINAL RESULT", name + " wins! " + reason);
+  statusBox.textContent = "👑 Champion crowned! Click the champion chat to talk.";
+  $("championCard").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function resetArena() {
+  battleId++;
+  running = false;
+  sending = false;
+  champion = "";
+  championHistory = [];
+  scores = { ChatGPT: 0, Perplexity: 0 };
+
+  topicInput.value = "";
+  $("userMessage").value = "";
+  $("chatInput").value = "";
+  leftPanel.replaceChildren();
+  rightPanel.replaceChildren();
+  $("judgeLog").replaceChildren();
+  $("championMessages").replaceChildren();
+  $("championCard").hidden = true;
+
+  addMessage(leftPanel, "ChatGPT", "Waiting for the topic...");
+  addMessage(rightPanel, "Perplexity", "Waiting for the topic...");
+  addMessage($("judgeLog"), "AI Judge", "The judge is waiting for the battle...");
+
+  updateScoreboard();
+  setBusy(false);
+  $("stop").disabled = false;
+  statusBox.textContent = "🟢 Arena reset. Ready for another battle!";
+}
+
+$("start").onclick = async () => {
+  const topic = topicInput.value.trim();
+  if (!topic) {
+    statusBox.textContent = "⚠️ Enter a topic first!";
+    topicInput.focus();
+    return;
+  }
+  if (running || sending) {
+    statusBox.textContent = "⚠️ Finish or stop the current task first.";
+    return;
+  }
+
+  resetArena();
+  topicInput.value = topic;
+  const thisBattle = battleId;
+  running = true;
+  setBusy(true);
+  $("judgeLog").replaceChildren();
+  addMessage(leftPanel, "Debate topic", topic);
+  addMessage(rightPanel, "Debate topic", topic);
+  let previousGPT = "";
+  let previousP = "";
+
+  try {
+    for (let round = 1; round <= 3; round++) {
+      if (!running || thisBattle !== battleId) break;
+
+      statusBox.textContent = "⚔️ Round " + round + ": arguments incoming!";
+
+      const gptBody = addMessage(
+        leftPanel, "Round " + round + " — ChatGPT", "🤔 Thinking..."
+      );
+      const gptPrompt =
+        "You are ChatGPT, the FOR-side debater. Topic: " + topic + ". " +
+        "Round " + round + " of 3. " +
+        (previousP ? "The opponent previously argued: " + previousP + ". " : "") +
+        "Make a strong, logical argument IN FAVOR of the topic. " +
+        "Exactly 2 short sentences, no more than 20 words total. Stay on topic.";
+
+      const gptReply = await askAI(gptPrompt);
+      if (!running || thisBattle !== battleId) break;
+      gptBody.textContent = gptReply;
+      previousGPT = gptReply;
+
+      statusBox.textContent = "⚔️ Round " + round + ": Perplexity is replying...";
+      const pBody = addMessage(
+        rightPanel, "Round " + round + " — Perplexity", "🤔 Thinking..."
+      );
+      const pPrompt =
+        "You are Perplexity, the AGAINST-side debater. Topic: " + topic + ". " +
+        "Round " + round + " of 3. The opponent argued: " + previousGPT + ". " +
+        "Respond with a strong, logical argument AGAINST the topic. " +
+        "Exactly 2 short sentences, no more than 20 words total. Stay on topic.";
+
+      const pReply = await askAI(pPrompt);
+      if (!running || thisBattle !== battleId) break;
+      pBody.textContent = pReply;
+      previousP = pReply;
+
+      statusBox.textContent = "⚖️ Judge is scoring Round " + round + "...";
+      const judgeBody = addMessage(
+        $("judgeLog"), "⚖️ Judge — Round " + round, "Reviewing both arguments..."
+      );
+
+      const judgePrompt =
+        "You are an impartial debate judge. Topic: " + topic + ". Round " + round + ". " +
+        "ChatGPT argues FOR: " + previousGPT + ". " +
+        "Perplexity argues AGAINST: " + previousP + ". " +
+        "Choose exactly ONE winner of this round. Judge relevance, logic, clarity, " +
+        "and how well each argument supports its side. Do not favor either name. " +
+        "Output the first line exactly as WINNER: ChatGPT or WINNER: Perplexity. " +
+        "Then give one short sentence explaining why.";
+
+      const judgment = await askAI(judgePrompt);
+      if (!running || thisBattle !== battleId) break;
+
+      const match = judgment.match(/WINNER\s*:\s*(ChatGPT|Perplexity)/i);
+      if (!match) {
+        throw new Error("The judge did not choose a clear winner. Press Start to retry.");
+      }
+
+      const winner = /^ChatGPT$/i.test(match[1]) ? "ChatGPT" : "Perplexity";
+      scores[winner]++;
+      updateScoreboard();
+      judgeBody.textContent =
+        "⭐ Star awarded to " + winner + "\n" + judgment;
+
+      if (scores[winner] >= 3) {
+        running = false;
+        chooseChampion(winner, "Reached 3 stars in Round " + round + ".");
+        return;
+      }
+    }
+
+    if (thisBattle !== battleId) return;
+
+    if (!running) {
+      statusBox.textContent = "🛑 Battle stopped. Current scores are saved.";
+      return;
+    }
+
+    running = false;
+
+    if (scores.ChatGPT > scores.Perplexity) {
+      chooseChampion("ChatGPT", "Won on points after three rounds.");
+    } else if (scores.Perplexity > scores.ChatGPT) {
+      chooseChampion("Perplexity", "Won on points after three rounds.");
+    } else {
+      statusBox.textContent = "⚖️ Scores tied! Judge is making the final decision...";
+      const finalDecision = await askAI(
+        "You are the impartial final judge. Topic: " + topic + ". " +
+        "ChatGPT score: " + scores.ChatGPT + ". Perplexity score: " +
+        scores.Perplexity + ". ChatGPT's latest argument: " + previousGPT +
+        ". Perplexity's latest argument: " + previousP +
+        ". Choose one overall winner based on the full battle and relevance. " +
+        "Output the first line exactly as WINNER: ChatGPT or WINNER: Perplexity. " +
+        "Then give one short reason."
+      );
+
+      const match = finalDecision.match(/WINNER\s*:\s*(ChatGPT|Perplexity)/i);
+      const winner = match
+        ? (/^ChatGPT$/i.test(match[1]) ? "ChatGPT" : "Perplexity")
+        : "ChatGPT";
+      chooseChampion(winner, "The judge broke the tie. " + finalDecision);
+    }
+  } catch (error) {
+    if (thisBattle === battleId) {
+      statusBox.textContent = "⚠️ " + error.message;
+    }
+  } finally {
+    if (thisBattle === battleId) {
+      running = false;
+      setBusy(false);
+    }
+  }
+};
+
+$("stop").onclick = () => {
+  if (running) {
+    running = false;
+    statusBox.textContent = "🛑 Stopping after the current model request...";
+  } else {
+    statusBox.textContent = "No battle is currently running.";
+  }
+};
+
+$("reset").onclick = resetArena;
+
+$("send").onclick = async () => {
+  const message = $("userMessage").value.trim();
+  if (!message) {
+    statusBox.textContent = "⚠️ Write a message first!";
+    return;
+  }
+  if (running || sending) {
+    statusBox.textContent = "⚠️ Wait for the current task to finish first.";
+    return;
+  }
+
+  sending = true;
+  setBusy(true);
+  $("userMessage").value = "";
+  const topic = topicInput.value.trim() || "General discussion";
+
+  addMessage(leftPanel, "🗣️ Lambo bro asks", message);
+  addMessage(rightPanel, "🗣️ Lambo bro asks", message);
+
+  try {
+    for (const ai of [
+      { panel: leftPanel, name: "ChatGPT", role: "FOR" },
+      { panel: rightPanel, name: "Perplexity", role: "AGAINST" }
+    ]) {
+      const body = addMessage(ai.panel, ai.name, "🤔 Thinking...");
+      try {
+        body.textContent = await askAI(
+          "You are the " + ai.name + " debate persona, arguing " + ai.role +
+          ". Topic: " + topic + ". Lambo bro asks: " + message +
+          ". Answer directly in a friendly, relevant way. Use two short sentences."
+        );
+      } catch (error) {
+        body.textContent = "❌ " + error.message;
+      }
+    }
+    statusBox.textContent = "✅ Both debaters answered!";
+  } finally {
+    sending = false;
+    setBusy(false);
+  }
+};
+
+$("chatSend").onclick = async () => {
+  const message = $("chatInput").value.trim();
+  if (!message || !champion) return;
+  if (running || sending) {
+    statusBox.textContent = "⚠️ Wait for the current task to finish first.";
+    return;
+  }
+
+  sending = true;
+  $("chatSend").disabled = true;
+  $("chatInput").value = "";
+  addMessage($("championMessages"), "Lambo bro", message);
+  championHistory.push({ role: "user", content: message });
+
+  try {
+    const history = championHistory.slice(-8).map(item =>
+      item.role.toUpperCase() + ": " + item.content
+    ).join("\n");
+
+    const reply = await askAI(
+      "You are " + champion + ", Lambo bro's friendly personal AI companion. " +
+      "Speak naturally, warmly, casually, and helpfully, like a friendly ChatGPT. " +
+      "You can explain things, brainstorm, help with coding, and answer questions. " +
+      "Use simple clear language, a little humor or emojis when appropriate. " +
+      "Be honest about limitations. Do not pretend to access tools or the internet. " +
+      "Conversation so far:\n" + history + "\nReply to Lambo bro's latest message."
+    );
+
+    championHistory.push({ role: "assistant", content: reply });
+    addMessage($("championMessages"), champion, reply);
+  } catch (error) {
+    addMessage($("championMessages"), "Error", error.message);
+  } finally {
+    sending = false;
+    $("chatSend").disabled = false;
+  }
+};
+
+$("chatClear").onclick = () => {
+  championHistory = [];
+  $("championMessages").replaceChildren();
+  if (champion) {
+    addMessage(
+      $("championMessages"), champion,
+      "Hey Lambo bro! 😎 Fresh chat. What shall we talk about?"
+    );
+  }
+};
+</script>
+</body>
+</html>
