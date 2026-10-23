@@ -1,4 +1,5 @@
 {
+  "framework": "express",
   "rewrites": [
     {
       "source": "/debate",
