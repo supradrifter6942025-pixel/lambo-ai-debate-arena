@@ -5,7 +5,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: "20kb" }));
-app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 app.post("/debate", async (req, res) => {
   const prompt = req.body && req.body.topic;
