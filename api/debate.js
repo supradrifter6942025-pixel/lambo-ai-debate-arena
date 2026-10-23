@@ -44,7 +44,7 @@ module.exports = async function handler(req, res) {
     const reply = data.choices && data.choices[0] &&
       data.choices[0].message && data.choices[0].message.content;
 
-    if (!reply) return res.status(502).json({ error: "The model returned no reply." });
+    if (!reply) {   console.error("Unexpected Groq response:", JSON.stringify(data));   return res.status(502).json({     error: "Groq returned an unexpected response. Check Vercel Runtime Logs."   }); }
     return res.status(200).json({ reply: reply.trim() });
   } catch (error) {
     console.error("Groq request failed:", error.message);
