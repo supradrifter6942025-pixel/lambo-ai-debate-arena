@@ -28,7 +28,7 @@ module.exports = async function handler(req, res) {
         messages: [{ role: "user", content: prompt.trim() }],
         temperature: 0.6,
         max_tokens: 400,
-        reasoning_effort:'low"
+        reasoning_effort:"low"
       })
     });
 
