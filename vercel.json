@@ -3,6 +3,10 @@
     {
       "source": "/debate",
       "destination": "/api/debate"
+    },
+    {
+      "source": "/",
+      "destination": "/index.html"
     }
   ]
 }
